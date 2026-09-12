@@ -293,6 +293,24 @@ test("图标配色必须走 alias（随主题变），不许用 static（亮暗�
 	);
 });
 
+test("诊断上报只在失败路径上（成功路径不得写日志）", () => {
+	const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
+	// 这条守卫来自一次真实问题：早先每次**卡片挂载**都上报一行，
+	// 而挂载是每次渲染都会发生的——日志无限增长，且绝大多数是没有价值的心跳。
+	// 现在只保留两处：非 2xx（fail）和 fetch 异常（throw）。
+	const calls = [...source.matchAll(/probe\(\{([^}]*)\}/g)].map((m) => m[1].replace(/\s+/g, " ").trim());
+	assert.equal(calls.length, 2, `应只有两处失败上报，实际 ${calls.length}：${calls.join(" | ")}`);
+	assert.match(calls[0], /stage: "fail"/);
+	assert.match(calls[1], /stage: "throw"/);
+	for (const call of calls) {
+		assert.ok(!/stage: "mount"/.test(call), "不得在挂载时上报");
+		assert.ok(!/stage: "click"/.test(call), "不得在点击时上报（点击本身不是失败）");
+		assert.ok(!/stage: "result"/.test(call), "不得上报成功结果");
+	}
+	// 挂载时应只装样式
+	assert.match(source, /useEffect\(\(\) => \{\s*ensureStyles\(\);\s*\}, \[\]\)/);
+});
+
 test("每个种类都有图标字形与配色规则", () => {
 	const kinds = ["pdf", "doc", "sheet", "ppt", "html", "image", "video", "audio", "archive", "code"];
 	for (const kind of kinds) {
