@@ -1,0 +1,62 @@
+{
+  "name": "dsh-delivery-cards",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness 插件：独立的交付卡片行——卡片空白处点击进侧边栏预览，另有两个常驻按钮「打开」（默认程序）与「定位」（文件资源管理器）；11 类文件类型图标、亮暗双主题、零依赖零构建。作为 priority -2 的 turnTail 链参与者，在存在 present 声明的回合接替渲染，绕开其它插件对该链的抢占。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vclike/dsh-delivery-cards.git"
+  },
+  "homepage": "https://github.com/vclike/dsh-delivery-cards#readme",
+  "bugs": {
+    "url": "https://github.com/vclike/dsh-delivery-cards/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "dsh",
+    "deepseek-harness",
+    "deliverables",
+    "present",
+    "turn-tail",
+    "delivery-card",
+    "file-icons"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/helpers.test.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-chat"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "^0.1.5-rc.1"
+  }
+}

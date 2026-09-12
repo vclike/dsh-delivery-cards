@@ -1,0 +1,20 @@
+# 依赖（本插件零运行时依赖，这里只是防止误提交）
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# 日志与临时产物
+*.log
+*.tmp
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 诊断产物（插件运行时写到 DSH_HOME，不该出现在仓库里）
+dsh-delivery-cards-probe.log
+dsh-delivery-cards-bring.log

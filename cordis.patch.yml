@@ -1,0 +1,14 @@
+# dsh-delivery-cards bundle layer.
+#
+# 一行宿主插件（宿主半边是空实现，只为让 Loader 认领这个包，从而让
+# dsh.client 声明被 client-modules 扫进启动图），真正的逻辑在 lib/client.js。
+#
+# 为什么需要它：conversation.chat.turnTail 是 chain slot——「第一个 accept 的
+# 渲染，其余全跳过」。dsh-better-sidebar 用 priority -1 抢在官方（默认 0）之前，
+# 而它只复刻了 produced chips 那一半，present 交付卡片随之消失。
+# 本插件用 priority -2 插到最前，只在「本轮存在 present 声明」时 accept，
+# 渲染一张带两个常驻动作按钮的卡片；没有 present 的回合一律弃权，
+# 把链交还给 better-sidebar 那行（行为与装本插件前完全一致）。
+- insert:
+    - id: dsh-delivery-cards
+      name: dsh-delivery-cards
