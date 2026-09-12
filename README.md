@@ -339,44 +339,39 @@ body[data-ds-dark-theme] .dshdc_root{--dshdc-fill:var(--dsw-static-neutral-850);
 - **失败即弃权**：`selectCards` 里任何异常都返回 `null` → 回落到原来那行。
   最坏情况是「和装之前一样」，不会把交付行渲染坏。有测试覆盖这条。
 
-## 安装
+## 诊断与日志：只在失败时记录
 
-```powershell
-# 1) 链接进 profile（本插件无依赖，不需要 pnpm install）
-cmd /c mklink /J "$env:DSH_HOME\profiles\web\node_modules\dsh-delivery-cards" "D:\dsh\sources\dsh-delivery-cards"
+两个日志文件都**在成功路径上保持静默**。点击是用户主动行为，但"每次成功写一行"依然会
+无限增长且没有信息量；真正值得记的是失败与降级：
 
-# 2) profile package.json 的 dependencies 加一行
-#    "dsh-delivery-cards": "link:D:/dsh/sources/dsh-delivery-cards"
+| 文件（在 `%DSH_HOME%\cache\`） | 写入时机 |
+|---|---|
+| `dsh-delivery-cards-bring.log` | ① 6 秒内**没找到**目标窗口（`TIMEOUT`）② 找到并显示了但**没拿到前台**（`DEGRADED`）。完全成功不写。 |
+| `dsh-delivery-cards-probe.log` | 浏览器侧**只在失败时**上报：非 2xx（`stage:fail`）或 `fetch` 异常（`stage:throw`）。挂载、点击、2xx 全都不上报。 |
 
-# 3) profile cordis.patch.yml 末尾加
-#    - insert:
-#        - id: dsh-delivery-cards
-#          name: dsh-delivery-cards
-```
+有测试守着客户端这条（"诊断上报只在失败路径上"）：两处上报、且不得出现
+`mount` / `click` / `result` 阶段——防止有人日后又加回心跳式的挂载日志。
 
-改完**刷新页面**。
-
-> 首次安装（新增 Loader entry）刷新即可——`client-modules` 会在 loader 变化时增量重组启动图。
-> 但**修改 `lib/client.js` 内容后必须重启 `dsh web`**：宿主给 bundle 的版本戳是
-> **进程启动时的 nonce**，不是内容哈希（"initial per-plugin revisions use process nonces"），
-> 所以不重启的话浏览器仍会拿到旧内容。
-
-### 卸载
-
-删掉上面第 2、3 步加的行，再
-`cmd /c rmdir "$env:DSH_HOME\profiles\web\node_modules\dsh-delivery-cards"`。
+> 早期版本每次卡片挂载写一行，用来确认"浏览器加载的是不是新 bundle"。
+> 那是排查阶段的脚手架，问题定位后已移除。
 
 ## 测试
 
 ```sh
-node --test test/helpers.test.js
+npm test
 ```
 
-14 项：徽标取词、`seq` 过滤、同路径取更晚声明、非法声明丢弃、
-弃权语义、**数据读取抛错时弃权**、`owner.seq` 缺失时不筛、
-**亮暗色切换必须走官方 token**、**零硬编码颜色**、**alias token 必须真实存在**、
-**尺寸对齐官方 `.file`**、**失败提示必须带状态码**、**原生动作 URL 形状**、
-**不得回归到 `present.host` 前置探测**。
+25 项。除了行为断言，还有几条**防回归守卫**，每条都对应一次真实踩坑：
+
+| 守卫 | 来自哪次 |
+|---|---|
+| 数据读取抛错时必须弃权（不把交付行渲染坏） | `selectCards` 的失败安全 |
+| 亮暗色切换必须走官方 token；**零硬编码颜色**；alias token 必须真实存在 | 主题适配 |
+| **图标配色不得使用静态色板** | 亮色下 10 个图标对比度不足 3:1 |
+| **诊断上报只在失败路径上** | 每次挂载写日志导致无限增长 |
+| 失败提示必须带 HTTP 状态码 | 按钮被静默禁用、点了没反应 |
+| 不得回归到 `present.host` 前置探测 | 同上 |
+| 尺寸对齐官方 `.file`（60px / 18px / 40px） | 视觉一致性 |
 
 ## 已知边界
 

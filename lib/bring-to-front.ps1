@@ -98,17 +98,19 @@ if (-not ([System.Management.Automation.PSTypeName]'DdcFront').Type) {
   Blog 'FAIL Add-Type unavailable'
   exit 4
 }
-Blog 'Add-Type ok'
 
 $needle = Split-Path -Leaf (Split-Path -Parent $Target)
 $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
 $round = 0
 
+# Logging policy: SILENT ON FULL SUCCESS.
+# A click is a deliberate user action, but a success line per click still grows
+# without bound and carries no information. Only two things are worth a line:
+#   1) the window was never found (TIMEOUT)      -> the feature is broken
+#   2) found + shown, but foreground not granted -> degraded, worth knowing
 while ((Get-Date) -lt $deadline) {
   $round++
-  $t0 = Get-Date
   $h = [DdcFront]::Find($needle)
-  $scanMs = [int]((Get-Date) - $t0).TotalMilliseconds
   if ($h -ne [IntPtr]::Zero) {
     $visBefore = [DdcFront]::IsWindowVisible($h)
     $icoBefore = [DdcFront]::IsIconic($h)
@@ -124,9 +126,9 @@ while ((Get-Date) -lt $deadline) {
     $fg = [DdcFront]::SetForegroundWindow($h)
     Start-Sleep -Milliseconds 200
     $isFg = [DdcFront]::IsFg($h)
-    $title = [DdcFront]::TitleOf($h)
-    Blog "HIT round=$round scanMs=$scanMs hwnd=$h title=[$title] visBefore=$visBefore iconicBefore=$icoBefore setFg=$fg isForeground=$isFg iconicAfter=$([DdcFront]::IsIconic($h))"
     if ($fg -or $isFg) { exit 0 }
+    $title = [DdcFront]::TitleOf($h)
+    Blog "DEGRADED round=$round hwnd=$h title=[$title] visBefore=$visBefore iconicBefore=$icoBefore iconicafter=$([DdcFront]::IsIconic($h)) setFg=$fg isForeground=$isFg"
     Start-Sleep -Milliseconds 200
   }
   Start-Sleep -Milliseconds 150
