@@ -297,18 +297,41 @@ test("诊断上报只在失败路径上（成功路径不得写日志）", () =>
 	const source = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
 	// 这条守卫来自一次真实问题：早先每次**卡片挂载**都上报一行，
 	// 而挂载是每次渲染都会发生的——日志无限增长，且绝大多数是没有价值的心跳。
-	// 现在只保留两处：非 2xx（fail）和 fetch 异常（throw）。
+	// 现在三处：每页一次的接手判定（boot）+ 两处失败（fail / throw）。
 	const calls = [...source.matchAll(/probe\(\{([^}]*)\}/g)].map((m) => m[1].replace(/\s+/g, " ").trim());
-	assert.equal(calls.length, 2, `应只有两处失败上报，实际 ${calls.length}：${calls.join(" | ")}`);
-	assert.match(calls[0], /stage: "fail"/);
-	assert.match(calls[1], /stage: "throw"/);
+	assert.equal(calls.length, 3, `应为 boot + 两处失败，实际 ${calls.length}：${calls.join(" | ")}`);
+	assert.match(calls[0], /stage: "boot"/);
+	assert.match(calls[1], /stage: "fail"/);
+	assert.match(calls[2], /stage: "throw"/);
 	for (const call of calls) {
-		assert.ok(!/stage: "mount"/.test(call), "不得在挂载时上报");
+		assert.ok(!/stage: "mount"/.test(call), "不得在挂载时上报（挂载是每次渲染都发生的）");
 		assert.ok(!/stage: "click"/.test(call), "不得在点击时上报（点击本身不是失败）");
 		assert.ok(!/stage: "result"/.test(call), "不得上报成功结果");
 	}
+	// boot 必须**每页只一次**，否则又变成无限增长
+	assert.match(source, /if \(decisionReported\) return;\s*decisionReported = true;/, "boot 上报必须只执行一次");
 	// 挂载时应只装样式
 	assert.match(source, /useEffect\(\(\) => \{\s*ensureStyles\(\);\s*\}, \[\]\)/);
+});
+
+test("宿主必须给诊断日志封顶（否则保留每页一行仍会无限增长）", () => {
+	const host = readFileSync(new URL("../lib/index.js", import.meta.url), "utf8");
+	assert.match(host, /function trimLog/, "必须有裁剪函数");
+	assert.match(host, /LOG_MAX_BYTES/, "必须有大小上限常量");
+	assert.match(host, /LOG_KEEP_LINES/, "必须保留最后若干行");
+	// 每次追加都要顺手裁剪。别用跨调用的正则——appendFileSync 的模板串里含
+	// `toISOString()`，括号会打断 `[^)]*` 这类写法（踩过）。
+	const from = host.indexOf("function append");
+	assert.ok(from > 0, "应能找到 append 函数");
+	const appendFn = host.slice(from, from + 600);
+	assert.match(appendFn, /appendFileSync/, "append 里要写文件");
+	assert.match(appendFn, /trimLog\(\)/, "append 里每次写完都要触发裁剪");
+});
+
+test("装配成功后必须取消告警定时器（否则打印误导性的 WARN）", () => {
+	const host = readFileSync(new URL("../lib/index.js", import.meta.url), "utf8");
+	const wireBlock = host.slice(host.indexOf("if (!wire())"));
+	assert.match(wireBlock, /clearTimeout\(warn\)/, "wire 成功时必须 clearTimeout(warn)");
 });
 
 test("每个种类都有图标字形与配色规则", () => {
