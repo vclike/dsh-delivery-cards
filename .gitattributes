@@ -1,0 +1,8 @@
+# 统一行尾为 LF，避免跨平台 diff 噪声。
+# 本仓库没有二进制资源；.ps1 用 LF 也能被 Windows PowerShell 正确读取。
+* text=auto eol=lf
+
+# 显式声明，防止将来加入二进制文件时被当文本处理
+*.png binary
+*.jpg binary
+*.ico binary
