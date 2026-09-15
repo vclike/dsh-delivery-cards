@@ -2,6 +2,8 @@
 
 DSH Web 的**独立交付卡片行**：在存在 `present` 声明的回合接替渲染，卡片交互按使用频次排序。
 
+**v2.0 新增** — 客户端兜底层：presented 为空时按启发式过滤 `produced`，让**任何模型**（Kimi / Claude / GPT / Gemini / 通义 / 文心 / 智谱等）即使不调 `present` 也能 render 交付卡片。
+
 **零依赖 · 零构建**——宿主半边与浏览器半边都是手写的 ESM / 手写 bundle，
 装的时候**不需要 `pnpm install`，也没有任何编译步骤**。
 
@@ -13,6 +15,8 @@ DSH Web 的**独立交付卡片行**：在存在 `present` 声明的回合接替
   未收录的扩展名回落成扩展名文字徽标（比一个通用文件图标信息量大）
 - **亮暗双主题**：配色全部走主题 token，无一硬编码色值
 - 顺手修掉两个缺陷：交付卡片被相邻插件抢链而消失；`windowsHide` 导致「定位」打开的窗口**不可见**
+- **v2.0 客户端兜底层**：presented 优先 + produced 启发式兜底 + 路径字面量去重，
+  让未训练模型也能 render 卡片（详见 [v2.0 启发式兜底](#v20-启发式兜底) 章节）
 
 ## 安装
 
@@ -381,3 +385,84 @@ npm test
   官方侧边栏，回不到 better-sidebar 的面板。
 - 读的是 `turn.data` 里的 `deliverables` 键，属**内部结构**；DSH 升级后需复验
   （`presented` 的元素仍需含 `path`/`seq`/`index`）。
+
+---
+
+## v2.0 启发式兜底
+
+### 解决的问题
+
+DSH 官方只为 **DeepSeek Flash 4.1** 训练了「在交付时调 `present`」这个行为。
+其它模型（Kimi / Claude / GPT / Gemini / 通义 / 文心 / 智谱等）**没训练过**，经常忘调
+`present`，导致客户端拿不到交付声明 → 卡片不渲染，只剩 `dsh-better-sidebar` 的"本次产出"
+chips。
+
+v2.0 在客户端加一层**启发式兜底**：
+
+1. `presented` 优先（v1.0.2 行为，Flash 模型路径完全不变）
+2. `presented` 为空时，从 `produced`（write/edit 工具产出）里启发式过滤
+3. 命中启发式的当作交付物 render（**完全 model 无关**）
+
+### 启发式规则
+
+| 阶段 | 规则 | 命中即视为最终交付 |
+|---|---|---|
+| 1. **排除**（优先）| 路径匹配 `_*.py` / `_*.sh` / `_test_*` / `_tmp_*` / `*.tmp` 等 | 排除（不 render）|
+| 2. **包含**| 路径含 `/out/` / `/final/` / `/finalized/` / `/deliverable/` / `/result/` / `/released/` | ✅ render |
+| 3. **包含**| 文件名含 `FINAL` / `终稿` / `交付` / `release` / `v1.0` 等版本号 | ✅ render |
+| 4. **扩展名**| `.md` / `.pdf` / `.docx` / `.pptx` / `.html` / `.xlsx` / `.txt` 等用户文档格式 | ✅ render |
+| 5. **大小**| 文件 > 5KB（KB 级 Python 脚本不是交付）| ✅ render |
+| 6. **默认**| 都不命中 | ❌ 不 render（保守）|
+
+### 测试矩阵
+
+`node --test test/helpers.test.js` 包含 36 项测试，其中 v2.0 新增 9 项（T1-T9）：
+
+| # | 场景 | 期望 |
+|---|---|---|
+| T1 | Flash 模型正常 present 路径 | presented 优先，不走 fallback |
+| T2 | Kimi 忘 present，5 个 produced（3 命中 + 2 脚本）| 兜底 render 3 个 |
+| T3 | 纯脚本无 present | 弃权让位 chips |
+| T4 | 启发式排除：路径/格式/大小 三种信号都能拦 | 各自独立验证 |
+| T5 | mixed presented + produced | presented 优先（不混合）|
+| T6 | 同文件不同写法（绝对 vs 大小写 vs 末尾斜杠）| 去重到 1 张卡 |
+| T7 | `normalizePath` 统一规范 | 分隔符/小写/末尾斜杠/空值保护 |
+| T8 | `heuristicFallbackFor` 复用 `seq < owner.seq` 过滤 | seq 边界正确 |
+| T9 | `owner.seq` 缺失时不筛 | 宁可不筛也不让整行消失 |
+
+### 路径字面量去重（修 `dsh-auto-deliver` 双卡 bug）
+
+OpenViking 记录过 `dsh-auto-deliver` 的失败根因之一：
+
+> "模型自己 present 同一文件但写**绝对路径**、而本插件写 **cwd 相对路径** 时，
+> 客户端按路径字面量去重 → **同一文件出两张卡片**。"
+
+v2.0 在 `heuristicFallbackFor` 里用 `normalizePath`（统一 `\` 为 `/`、小写、
+去末尾斜杠）后再去重。**修这一 bug 兜底层才算完整**。
+
+注：WSL 路径（`/c/Users/...`）和 Windows 路径（`D:\...`）不会自动等价——这是 OS 适配问题，
+不是本插件的事。
+
+### 与 `dsh-better-sidebar` 的关系
+
+- 兜底命中 → 接管渲染，本卡片行出现
+- 兜底未命中（纯过程文件）→ 弃权让位 `dsh-better-sidebar`，chips 行出现
+- **不画双卡**——一条交付行只有一种形态
+
+### 配套 skill（建议）
+
+`dsh-delivery-aware` skill（位于 `~/.agents/skills/`）让 agent 学会在写完最终文件后主动调
+`present`，作为软约束层与本插件（硬保障）双管齐下。详见 OpenViking 文档
+`DSH技能/dsh-delivery-aware.md`。
+
+### 已知限制
+
+- 启发式有边界 case（比如把 `我的final成果.py` 误判为 final 交付，但又有 `_test_`
+  后缀被排除规则拦住）——可通过 `excludePatterns` / `includePatterns` 配置覆盖
+  （v2.1 计划）
+- 完全相同的文件用不同 OS 风格路径（Windows vs WSL）不会自动去重
+
+### 客户端 bundle 改动提示
+
+`lib/client.js` 是客户端 bundle——**改动需要重启 DSH web**才生效（cordis 的
+`patchReload: live` 不适用 bundle，bundle 走的是进程启动时 nonce 版本戳）。

@@ -43,13 +43,20 @@ const mod = definition.factory((request) => {
 	throw new Error(`unexpected require: ${request}`);
 });
 
-const { presentedFor, selectCards, badgeText, fileKind, kindIcon, textKinds, badgeFor, css } = mod;
+const { presentedFor, heuristicFallbackFor, isLikelyDeliverable, normalizePath, selectCards, badgeText, fileKind, kindIcon, textKinds, badgeFor, css } = mod;
 
 /** 造一个 owner：presented 列表挂在 turn.data 的 deliverables 键上。 */
-function makeOwner(presented, seq = 100) {
+function makeOwner(presented, seq = 100, produced) {
 	return {
 		seq,
-		turn: { data: { get: (key) => (key === "deliverables" ? { produced: [], presented } : undefined) } },
+		turn: {
+			data: {
+				get: (key) => {
+					if (key === "deliverables") return { presented, produced: produced ?? [] };
+					return undefined;
+				},
+			},
+		},
 		openFile: () => {},
 	};
 }
@@ -303,6 +310,7 @@ test("诊断上报只在失败路径上（成功路径不得写日志）", () =>
 	assert.match(calls[0], /stage: "boot"/);
 	assert.match(calls[1], /stage: "fail"/);
 	assert.match(calls[2], /stage: "throw"/);
+	assert.match(calls[0], /source: source \|\| "presented"/, "boot 上报应携带 source 字段以便诊断 fallback 路径");
 	for (const call of calls) {
 		assert.ok(!/stage: "mount"/.test(call), "不得在挂载时上报（挂载是每次渲染都发生的）");
 		assert.ok(!/stage: "click"/.test(call), "不得在点击时上报（点击本身不是失败）");
@@ -417,4 +425,180 @@ test("图标颜色只用主题自带的静态色板与 alias 语义色", () => {
 	for (const token of css.matchAll(/var\((--dsw-static-[a-z]+)-/g)) {
 		assert.ok(palette.has(token[1]), `${token[1]} 不在实测存在的静态色板里`);
 	}
+});
+
+// ── v2.0 客户端兜底层（启发式 + produced fallback）────────────────────
+// 解决非训练模型忘 present 的问题：presented 为空时，从 produced 启发式过滤出
+// 看起来是最终交付的文件，render 它们。
+//
+// 测试矩阵 T1-T6（与 OpenViking 设计文档 `dsh-delivery-cards-v2-fallback.md` 对齐）
+
+test("T1 - Flash 模型正常 present 路径：presented 优先，不走 fallback", () => {
+	const owner = makeOwner(
+		[{ path: "D:\\final.md", description: "最终方案", seq: 1, index: 0 }],
+		100,
+		// produced 同时存在（这不应该发生于正常流程，但保证 presented 优先）
+		[{ path: "D:\\out\\a.md", description: "produced 候选", seq: 2, index: 0 }],
+	);
+	const result = selectCards(owner);
+	assert.ok(result, "Flash 模型有 presented 必须 render");
+	assert.equal(result.files.length, 1, "应只 render 1 个 presented 文件");
+	assert.equal(result.files[0].path, "D:\\final.md", "render presented 而非 produced");
+});
+
+test("T2 - 非训练模型（Kimi/Claude/GPT）忘 present：presented 为空，启发式兜底", () => {
+	const owner = makeOwner(
+		[], // 忘 present
+		100,
+		[
+			{ path: "D:\\project\\out\\v1.0.md", description: "方案 v1.0", seq: 1, index: 0 },
+			{ path: "D:\\project\\out\\final.md", description: "最终", seq: 2, index: 0 },
+			{ path: "D:\\project\\result.md", description: "结果", seq: 3, index: 0 },
+			{ path: "D:\\project\\_apply_v1.py", description: "脚本（过程文件）", seq: 4, index: 0 },
+			{ path: "D:\\project\\_inspect.py", description: "调试脚本", seq: 5, index: 0 },
+		],
+	);
+	const result = selectCards(owner);
+	assert.ok(result, "兜底应 render");
+	assert.equal(result.files.length, 3, "3 启发命中（out / final / result）+ 2 脚本排除");
+	const paths = result.files.map((f) => f.path).sort();
+	assert.deepEqual(paths, [
+		"D:\\project\\out\\final.md",
+		"D:\\project\\out\\v1.0.md",
+		"D:\\project\\result.md",
+	]);
+});
+
+test("T3 - 纯过程文件无 present：兜底命中 0，弃权让位 better-sidebar", () => {
+	const owner = makeOwner(
+		[],
+		100,
+		[
+			{ path: "D:\\tmp\\_apply_v1.py", seq: 1, index: 0 },
+			{ path: "D:\\tmp\\_inspect.py", seq: 2, index: 0 },
+			{ path: "D:\\debug\\test.py", seq: 3, index: 0 },
+		],
+	);
+	const result = selectCards(owner);
+	assert.equal(result, null, "纯过程文件必须弃权让位 better-sidebar");
+});
+
+test("T4 - 启发式排除：路径/格式/大小 三种信号都能拦住过程文件", () => {
+	// 路径含 _inspect_/_apply_/_test_/_.tmp/ → 排除
+	assert.equal(isLikelyDeliverable({ path: "D:\\a\\_apply_v1.py" }), false);
+	assert.equal(isLikelyDeliverable({ path: "D:\\a\\_inspect.py" }), false);
+	assert.equal(isLikelyDeliverable({ path: "D:\\a\\_test_foo.py" }), false);
+	assert.equal(isLikelyDeliverable({ path: "D:\\a\\x.tmp" }), false);
+	// 路径含 /tmp/ 或 /debug/ → 排除
+	assert.equal(isLikelyDeliverable({ path: "D:\\tmp\\foo.md" }), false);
+	assert.equal(isLikelyDeliverable({ path: "D:\\debug\\bar.md" }), false);
+	// 命中包含规则 → 包含
+	assert.equal(isLikelyDeliverable({ path: "D:\\out\\final.md" }), true);
+	assert.equal(isLikelyDeliverable({ path: "D:\\FINAL.md" }), true);
+	assert.equal(isLikelyDeliverable({ path: "D:\\终稿.md" }), true);
+	assert.equal(isLikelyDeliverable({ path: "D:\\v1.0.md" }), true);
+	// 命中用户文档扩展名 → 包含
+	assert.equal(isLikelyDeliverable({ path: "D:\\a.md" }), true);
+	assert.equal(isLikelyDeliverable({ path: "D:\\a.pdf" }), true);
+	assert.equal(isLikelyDeliverable({ path: "D:\\a.docx" }), true);
+	// 大小 > 5KB → 包含
+	assert.equal(isLikelyDeliverable({ path: "D:\\random.dat", size: 10 * 1024 }), true);
+	// 拿不准 → 排除（保守）
+	assert.equal(isLikelyDeliverable({ path: "D:\\xyz.unknownext" }), false);
+	assert.equal(isLikelyDeliverable({ path: "D:\\xyz" }), false);
+});
+
+test("T5 - mixed presented + produced：presented 优先（不混合）", () => {
+	const owner = makeOwner(
+		[{ path: "D:\\final.md", seq: 1, index: 0 }], // presented 只有 1 个
+		100,
+		// produced 含 5 个应该兜底的
+		[
+			{ path: "D:\\out\\v1.md", seq: 2, index: 0 },
+			{ path: "D:\\out\\v2.md", seq: 3, index: 0 },
+			{ path: "D:\\out\\v3.md", seq: 4, index: 0 },
+			{ path: "D:\\out\\v4.md", seq: 5, index: 0 },
+			{ path: "D:\\out\\v5.md", seq: 6, index: 0 },
+		],
+	);
+	const result = selectCards(owner);
+	assert.equal(result.files.length, 1, "presented 优先：只 render 1 个");
+	assert.equal(result.files[0].path, "D:\\final.md", "不与 produced 混合");
+});
+
+test("T6 - 兜底去重：同文件不同写法只一张卡（修 dsh-auto-deliver 双卡 bug）", () => {
+	// 三种写法应该规范化到同一路径——绝对 vs 相对 vs 大小写
+	// 注：WSL 路径（/c/Users/...）不会自动等价于 Windows 路径（这是 OS 适配问题，
+	// 不是插件的事；v2.0 只修"同 OS 内不同写法"的双卡）
+	const owner = makeOwner(
+		[],
+		100,
+		[
+			{ path: "D:\\project\\out\\final.md", seq: 1, index: 0 },
+			{ path: "D:\\project\\out\\FINAL.MD", seq: 2, index: 0 }, // 大小写
+			{ path: "D:\\project\\out\\final.md/", seq: 3, index: 0 }, // 末尾斜杠
+		],
+	);
+	const result = selectCards(owner);
+	assert.ok(result);
+	assert.equal(result.files.length, 1, "三种写法规范化后是同一文件，必须去重到 1");
+	assert.equal(result.files[0].path, "D:\\project\\out\\final.md", "保留第一条原始路径");
+});
+
+test("T7 - normalizePath 统一规范（修 v1.0.2 时代就记录的路径字面量去重 bug）", () => {
+	assert.equal(normalizePath("D:\\a\\b.md"), "d:/a/b.md");
+	assert.equal(normalizePath("d:/a/b.md/"), "d:/a/b.md", "去末尾斜杠");
+	assert.equal(normalizePath("D:\\A\\B.MD"), "d:/a/b.md", "全小写");
+	assert.equal(normalizePath(""), "", "空字符串保护");
+	assert.equal(normalizePath(null), "", "null 保护");
+	assert.equal(normalizePath(undefined), "", "undefined 保护");
+	assert.equal(normalizePath(42), "", "非字符串保护");
+});
+
+test("T8 - heuristicFallbackFor 复用 presentedFor 的 seq 过滤逻辑", () => {
+	// seq >= owner.seq 的文件应被过滤（owner.seq 是收尾 assistant 消息的序号）
+	const owner = {
+		seq: 50,
+		turn: {
+			data: {
+				get: (key) => {
+					if (key === "deliverables") return {
+						presented: [],
+						produced: [
+							{ path: "D:\\out\\early.md", seq: 10, index: 0 }, // 通过
+							{ path: "D:\\out\\equal.md", seq: 50, index: 0 }, // 不通过（不是 <）
+							{ path: "D:\\out\\late.md", seq: 100, index: 0 }, // 不通过
+						],
+					};
+					return undefined;
+				},
+			},
+		},
+		openFile: () => {},
+	};
+	const files = heuristicFallbackFor(owner);
+	assert.equal(files.length, 1, "只有 seq < 50 的通过");
+	assert.equal(files[0].path, "D:\\out\\early.md");
+});
+
+test("T9 - heuristicFallbackFor 在 owner.seq 缺失时不筛（宁可不筛也不让整行消失）", () => {
+	const owner = {
+		seq: null, // 模拟缺失
+		turn: {
+			data: {
+				get: (key) => {
+					if (key === "deliverables") return {
+						presented: [],
+						produced: [
+							{ path: "D:\\out\\a.md", seq: 999, index: 0 },
+						],
+					};
+					return undefined;
+				},
+			},
+		},
+		openFile: () => {},
+	};
+	const files = heuristicFallbackFor(owner);
+	assert.equal(files.length, 1, "owner.seq 缺失时不过滤");
 });

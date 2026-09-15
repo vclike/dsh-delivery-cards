@@ -1,7 +1,7 @@
 {
   "name": "dsh-delivery-cards",
-  "version": "1.0.2",
-  "description": "DeepSeek Harness 插件：独立的交付卡片行——卡片空白处点击进侧边栏预览，另有两个常驻按钮「打开」（默认程序）与「定位」（文件资源管理器）；11 类文件类型图标、亮暗双主题、零依赖零构建。作为 priority -2 的 turnTail 链参与者，在存在 present 声明的回合接替渲染，绕开其它插件对该链的抢占。",
+  "version": "2.0.0",
+  "description": "DeepSeek Harness 插件：独立的交付卡片行——卡片空白处点击进侧边栏预览，另有两个常驻按钮「打开」（默认程序）与「定位」（文件资源管理器）；11 类文件类型图标、亮暗双主题、零依赖零构建。作为 priority -2 的 turnTail 链参与者，在存在 present 声明的回合接替渲染，绕开其它插件对该链的抢占。v2.0 新增客户端兜底层：presented 为空时按路径/格式/大小启发式过滤 produced，对未训练模型（Kimi/Claude/GPT/Gemini/通义等）也能 render 交付卡片——不再依赖 DSH 官方只对 DeepSeek Flash 4.1 做的 present 训练。",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -23,7 +23,7 @@
     "type": "git",
     "url": "https://github.com/vclike/dsh-delivery-cards.git"
   },
-  "homepage": "https://github.com/vclike/dsh-delivery-cards#readme",
+  "homework": "https://github.com/vclike/dsh-delivery-cards#readme",
   "bugs": {
     "url": "https://github.com/vclike/dsh-delivery-cards/issues"
   },
@@ -36,7 +36,9 @@
     "present",
     "turn-tail",
     "delivery-card",
-    "file-icons"
+    "file-icons",
+    "heuristic-fallback",
+    "model-agnostic"
   ],
   "engines": {
     "node": ">=20"
